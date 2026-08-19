@@ -10,6 +10,7 @@ import json
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent      # 프로그램 만들기/
@@ -85,9 +86,24 @@ def main() -> int:
     if guide.exists():
         shutil.copy2(guide, out / "사용설명서.md")
 
+    # 나눠 줄 zip 을 만든다. 공개 저장소에 올릴 수 있도록 credentials.json 은 뺀다.
+    zip_path = ROOT / "메일자동화.zip"
+    if zip_path.exists():
+        zip_path.unlink()
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(out.rglob("*")):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(out)
+            if rel.name == "credentials.json":
+                continue            # 구글 인증 파일은 따로 전달한다
+            z.write(f, Path("메일자동화") / rel)
+    print(f"  나눠 줄 파일: {zip_path.name} ({zip_path.stat().st_size / 1e6:.0f}MB)")
+    print("  (구글 인증 파일 credentials.json 은 빠져 있습니다 — 따로 전달하세요)")
+
     print()
     print(f"다 됐습니다 → {out}")
-    print("이 '배포' 폴더를 통째로 전달하세요.")
+    print("이 '배포' 폴더를 통째로 전달하거나, 메일자동화.zip 을 올려 나눠 주세요.")
     print("(계정 정보가 든 token.json 과 config.json 은 넣지 않았습니다)")
 
     try:

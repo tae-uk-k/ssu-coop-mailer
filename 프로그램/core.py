@@ -66,6 +66,8 @@ WS_CFG_DEFAULTS: dict = {
     # PPT 자리 ↔ 명단 열 짝짓기  {"(업체명)": "업체명"}
     "slot_map":          {},
     "slot_josa":         True,
+    # 본문에 원래 있는 괄호 — 짝짓지 않아도 경고하지 않는다
+    "slot_ignore":       [],
 
     "file_name_pattern": "제안서 {{업체명}}",
     "email_subject":     "",
@@ -651,3 +653,83 @@ def preview_filenames(pattern: str, rows: list[dict], limit: int = 200) -> dict:
         "total":    len(names),
         "leftover": sorted(left),          # 엑셀에 없는 열을 적었을 때
     }
+
+
+# ──────────────────────────────────────────────────────────
+# 보내기 전 점검 — 안 바뀐 채 나갈 것을 찾는다
+# ──────────────────────────────────────────────────────────
+
+# 자리 이름에 이런 말이 들어 있으면 '바뀌어야 할 곳' 으로 본다.
+# (스태프) (강원도 원주) 같은 본문 괄호와 구분하기 위한 것.
+PLACEHOLDER_HINTS = (
+    "기업", "회사", "업체", "브랜드", "사명", "상호",
+    "제품", "품목", "상품", "협찬", "물품", "지원",
+    "담당자", "성함", "이름", "직함", "부서",
+)
+
+
+def token_column(token: str, columns: list[str]) -> str:
+    """{{업체명은}} 처럼 조사가 붙어도 어느 열인지 찾아 준다. 없으면 빈 문자열."""
+    if token in columns:
+        return token
+    for key in _JOSA_KEYS:
+        if token.endswith(key):
+            base = token[: -len(key)]
+            if base in columns:
+                return base
+    return ""
+
+
+def unmatched_tokens(text: str, columns: list[str]) -> list[str]:
+    """{{...}} 중 명단에 없는 것. 이대로 보내면 글자가 그대로 나간다."""
+    out = []
+    for t in sorted(placeholder_names(text)):
+        if not token_column(t, columns):
+            out.append(t)
+    return out
+
+
+def looks_like_placeholder(slot_inner: str, columns: list[str]) -> bool:
+    """PPT 의 (자리) 가 '원래 바뀌어야 할 곳' 처럼 보이는지."""
+    if guess_column(columns, slot_inner):
+        return True
+    return any(h in slot_inner for h in PLACEHOLDER_HINTS)
+
+
+def pre_send_issues(cfg: dict, slots, sheet) -> tuple[list[dict], list[dict]]:
+    """(꼭 고쳐야 할 것, 확인만 하면 되는 것) 을 돌려준다.
+
+    돌려주는 각 항목: {"where", "token", "detail", "how"}
+    """
+    must, check = [], []
+    cols = list(sheet.columns) if sheet else []
+
+    # 1. 메일 제목·본문·파일이름 — 명단에 없는 {{토큰}}
+    for where, text in (("메일 제목", cfg.get("email_subject", "")),
+                        ("메일 본문", cfg.get("email_body", "")),
+                        ("파일 이름", cfg.get("file_name_pattern", ""))):
+        for t in unmatched_tokens(text, cols):
+            must.append({
+                "where": where,
+                "token": "{{" + t + "}}",
+                "detail": f"명단에 '{t}' 열이 없어요.",
+                "how": ("이 글자가 그대로 나갑니다. "
+                        + (f"'{guess_column(cols, t)}' 열을 쓰시려던 것 같아요."
+                           if guess_column(cols, t) else "명단의 열 이름을 확인해 주세요.")),
+            })
+
+    # 2. 제안서 PPT — 짝짓지 않은 자리
+    ignore = set(cfg.get("slot_ignore") or [])
+    smap = {k: v for k, v in (cfg.get("slot_map") or {}).items() if v}
+    for s in (slots or []):
+        if s.name in smap or s.name in ignore:
+            continue
+        item = {
+            "where": "제안서",
+            "token": s.name,
+            "detail": f"{s.where} 에 있어요.",
+            "how": "3단계에서 넣을 열을 고르거나, 원래 그런 문구면 '그냥 두기' 를 눌러 주세요.",
+        }
+        (must if looks_like_placeholder(s.inner, cols) else check).append(item)
+
+    return must, check

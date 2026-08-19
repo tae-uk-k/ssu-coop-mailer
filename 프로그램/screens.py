@@ -674,7 +674,8 @@ class SlotsScreen(Screen):
         return sheet.rows[0] if sheet.rows else {}
 
     def _slot_card(self, slot, cols: list[str], picked: str, sample: dict):
-        unset = not picked
+        ignored = slot.name in set(self.app.cfg.get("slot_ignore") or [])
+        unset = not picked and not ignored
         card = T.Card(self._list)
         card.pack(fill="x", pady=(0, 10))
         box = ctk.CTkFrame(card, fg_color="transparent")
@@ -688,6 +689,8 @@ class SlotsScreen(Screen):
                      corner_radius=9, padx=11, pady=4).pack(side="left")
         if unset:
             T.Tag(top, "아직 안 골랐어요", "amber").pack(side="left", padx=(8, 0))
+        elif ignored:
+            T.Tag(top, "그대로 두기로 함", "grey").pack(side="left", padx=(8, 0))
         elif picked == slot.inner:
             T.Tag(top, "자동으로 짝지었어요", "green").pack(side="left", padx=(8, 0))
         T.label(top, slot.where, T.G500, 12).pack(side="right")
@@ -703,6 +706,14 @@ class SlotsScreen(Screen):
         sel.pack(side="left")
         T.label(mid, "를 넣어요", T.G500, 13).pack(side="left", padx=(10, 0))
 
+        # 본문에 원래 있는 괄호는 짝짓지 않아도 되게 표시해 둔다
+        if ignored:
+            T.Btn(mid, "다시 고르기", "ghost", small=True, width=84,
+                  command=lambda s=slot: self._unignore(s)).pack(side="right")
+        elif not picked:
+            T.Btn(mid, "원래 이런 문구예요", "ghost", small=True, width=126,
+                  command=lambda s=slot: self._ignore(s)).pack(side="right")
+
         # 어떤 문장에 쓰이는지 — 원문과 채운 결과를 나란히
         ctx = ctk.CTkFrame(box, fg_color="transparent")
         ctx.pack(fill="x", pady=(14, 0))
@@ -715,9 +726,28 @@ class SlotsScreen(Screen):
                                  bool(self.app.cfg.get("slot_josa", True)))
         if picked:
             T.label(ctx, after, T.G800, 12, True).pack(anchor="w")
+        elif ignored:
+            T.label(ctx, f"{slot.name} 글자가 그대로 나갑니다. (그렇게 하기로 하셨어요)",
+                    T.G500, 12).pack(anchor="w")
         else:
-            T.label(ctx, f"고르지 않으면 {slot.name} 글자가 그대로 남아요.",
+            T.label(ctx, f"고르지 않으면 {slot.name} 글자가 그대로 제안서에 남아요.",
                     T.AMBER, 12).pack(anchor="w")
+
+    def _ignore(self, slot):
+        """(스태프) 처럼 원래 본문에 있는 괄호는 짝짓지 않아도 되게 기억해 둔다."""
+        ig = set(self.app.cfg.get("slot_ignore") or [])
+        ig.add(slot.name)
+        self.app.cfg["slot_ignore"] = sorted(ig)
+        self.app.save_cfg()
+        self.on_show()
+        self.app.refresh_rail()
+
+    def _unignore(self, slot):
+        ig = set(self.app.cfg.get("slot_ignore") or [])
+        ig.discard(slot.name)
+        self.app.cfg["slot_ignore"] = sorted(ig)
+        self.app.save_cfg()
+        self.on_show()
 
     def _pick(self, slot, value: str):
         smap = self.app.cfg.get("slot_map") or {}
@@ -1124,6 +1154,16 @@ class SendScreen(Screen):
             self._check.set_text("· " + "\n· ".join(problems))
             self._btn_send.configure(state="disabled")
             self._btn_hint.configure(text="위에 적힌 것을 채우면 보낼 수 있어요.")
+        elif getattr(self, "_soft", None):
+            self._check.configure(fg_color=T.BLUE_BG)
+            tokens = ", ".join(it["token"] for it in self._soft[:4])
+            self._check.set_text(
+                f"보낼 수 있어요. 다만 제안서의 {tokens} 은(는) 바뀌지 않고 "
+                "그대로 나갑니다.  원래 그런 문구면 괜찮아요. "
+                "아니라면 왼쪽 3단계에서 골라 주세요.")
+            self._btn_send.configure(state="normal" if n else "disabled")
+            self._btn_hint.configure(
+                text="보내는 중에 멈출 수 있고, 다시 시작하면 보낸 곳은 건너뛰어요.")
         else:
             self._check.configure(fg_color=T.GREEN_BG)
             self._check.set_text("다 됐어요. 이제 보내기만 하면 됩니다.")
@@ -1154,6 +1194,12 @@ class SendScreen(Screen):
             out.append("메일 본문이 비어 있어요. 왼쪽 4단계에서 써 주세요.")
         if not engine.powerpoint_available():
             out.append("이 컴퓨터에 PowerPoint가 없어요. 제안서를 PDF로 바꾸려면 PowerPoint가 있어야 해요.")
+
+        must, check = core.pre_send_issues(cfg, self.app.get_slots(), sheet)
+        self._soft = check                       # 확인만 하면 되는 것
+        for it in must:
+            out.append(f"{it['where']}의 {it['token']} 이(가) 안 바뀐 채 나가요. "
+                       f"{it['detail']} {it['how']}")
 
         if sheet and sheet.rows:
             info = core.preview_filenames(

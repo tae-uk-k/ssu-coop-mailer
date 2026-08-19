@@ -1,0 +1,9 @@
+# 메일 자동화 실행에 필요한 것
+openpyxl                    # 엑셀 명단 읽기/쓰기
+pywin32                     # PowerPoint 제어 (PDF 변환)
+customtkinter               # 화면
+google-api-python-client    # Gmail 발송 / 반송 확인
+google-auth-httplib2
+google-auth-oauthlib
+
+# pandas, tkinterdnd2, CTkinterDnD 는 더 이상 쓰지 않습니다.

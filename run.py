@@ -65,8 +65,22 @@ def _update_url() -> str:
         return ""
 
 
+def _is_dev() -> bool:
+    """여기가 코드를 고치는 폴더인가.
+
+    개발 폴더에서 갱신기가 돌면, 고치던 코드가 릴리스 버전으로 덮어써진다.
+    .git 이 있으면 개발 중으로 보고 갱신을 건너뛴다.
+    (exe 로 만들어 쓰는 국원 PC 에는 .git 이 없으므로 정상 갱신된다)
+    """
+    return not getattr(sys, "frozen", False) and (ROOT / ".git").exists()
+
+
 def _self_update() -> str:
     """켤 때 한 번. 무슨 일이 있어도 프로그램이 켜지는 걸 막지 않는다."""
+    if _is_dev():
+        print("[알림] 개발 폴더라 자동 갱신을 건너뜁니다. (.git 이 있음)")
+        return ""
+
     try:
         import updater
     except Exception:

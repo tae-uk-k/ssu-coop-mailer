@@ -20,6 +20,7 @@ import customtkinter as ctk
 
 import core
 import engine
+import explain
 import screens
 import theme as T
 from theme import font
@@ -232,7 +233,7 @@ class App(ctk.CTk):
         try:
             scr.on_show()
         except Exception as e:
-            self.log(f"화면을 여는 중 문제가 생겼어요 — {e}")
+            self.log("화면을 여는 중 문제가 생겼어요 — " + explain.short(e))
         self.refresh_rail()
 
     def _rail_click(self, name: str):
@@ -416,7 +417,7 @@ class App(ctk.CTk):
             self._sheet_key = key
         except Exception as e:
             self.sheet = None
-            self.log(f"명단을 읽지 못했어요 — {e}")
+            self.log("명단을 읽지 못했어요 — " + explain.short(e))
         return self.sheet
 
     def get_slots(self):
@@ -435,7 +436,7 @@ class App(ctk.CTk):
             self.slots = engine.scan_slots(path)
         except Exception as e:
             self.slots = []
-            self.log(f"제안서를 훑지 못했어요 — {e}")
+            self.log("제안서를 훑지 못했어요 — " + explain.short(e))
         return self.slots
 
     # ══════════════════════════════════════════════════════
@@ -493,7 +494,8 @@ class App(ctk.CTk):
 
     def _gmail_fail(self, e):
         self.log("")
-        messagebox.showerror("연결하지 못했어요", str(e))
+        what, how = explain.explain(e)
+        T.show_error(self, "Gmail에 연결하지 못했어요", what, how, explain.detail(e))
 
     # ══════════════════════════════════════════════════════
     # 기타

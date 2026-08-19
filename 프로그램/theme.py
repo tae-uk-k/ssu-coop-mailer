@@ -606,3 +606,78 @@ def bind_wrap(widget, source=None, margin: int = 44, minimum: int = 220) -> None
             pass
 
     src.bind("<Configure>", _on, add="+")
+
+
+# ──────────────────────────────────────────────────────────
+# 오류 알림 창
+# ──────────────────────────────────────────────────────────
+
+def show_error(master, title: str, what: str, how: str = "",
+               detail: str = "", kind: str = "red") -> None:
+    """무슨 일인지 / 어떻게 하면 되는지를 보여 준다.
+
+    파이썬 원문은 '자세한 내용'에 접어 둔다. 국원분들께는 필요 없고,
+    고칠 사람에게 보여 줄 때만 펴면 된다.
+    """
+    win = ctk.CTkToplevel(master)
+    win.title(title)
+    win.configure(fg_color=BG)
+    win.resizable(False, False)
+    win.transient(master.winfo_toplevel())
+
+    body = ctk.CTkFrame(win, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=24, pady=22)
+
+    head = ctk.CTkFrame(body, fg_color="transparent")
+    head.pack(fill="x", pady=(0, 12))
+    mark, color, bg = {
+        "red":   ("!", RED, RED_BG),
+        "amber": ("!", AMBER, AMBER_BG),
+        "blue":  ("i", BLUE_D, BLUE_BG),
+    }.get(kind, ("!", RED, RED_BG))
+    ctk.CTkLabel(head, text=mark, font=font(16, True), text_color=color,
+                 width=32, height=32, corner_radius=16,
+                 fg_color=bg).pack(side="left", padx=(0, 12))
+    ctk.CTkLabel(head, text=what, font=font(16, True), text_color=G900,
+                 wraplength=380, justify="left", anchor="w").pack(side="left", fill="x", expand=True)
+
+    if how:
+        box = ctk.CTkFrame(body, fg_color=G100, corner_radius=12)
+        box.pack(fill="x", pady=(0, 14))
+        ctk.CTkLabel(box, text=how, font=font(13), text_color=G700,
+                     wraplength=400, justify="left", anchor="w"
+                     ).pack(fill="x", padx=16, pady=13)
+
+    if detail:
+        holder = {"open": False}
+        toggle = ctk.CTkButton(
+            body, text="자세한 내용 보기", font=font(12), height=26,
+            fg_color="transparent", hover_color=G100, text_color=G500,
+            corner_radius=8, anchor="w")
+        toggle.pack(fill="x", pady=(0, 6))
+
+        det = TextBox(body, height=110, font=font(11, mono=True))
+        det.insert("1.0", detail)
+        det.configure(state="disabled")
+
+        def flip():
+            holder["open"] = not holder["open"]
+            if holder["open"]:
+                det.pack(fill="x", pady=(0, 10))
+                toggle.configure(text="자세한 내용 접기")
+            else:
+                det.pack_forget()
+                toggle.configure(text="자세한 내용 보기")
+            win.update_idletasks()
+
+        toggle.configure(command=flip)
+
+    Btn(body, "확인", width=90, command=win.destroy).pack(anchor="e", pady=(4, 0))
+
+    win.update_idletasks()
+    m = master.winfo_toplevel()
+    x = m.winfo_rootx() + (m.winfo_width() - win.winfo_width()) // 2
+    y = m.winfo_rooty() + (m.winfo_height() - win.winfo_height()) // 3
+    win.geometry(f"+{max(0, x)}+{max(0, y)}")
+    win.grab_set()
+    win.focus_force()

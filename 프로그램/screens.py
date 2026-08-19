@@ -14,6 +14,7 @@ import customtkinter as ctk
 
 import core
 import engine
+import explain
 import theme as T
 from theme import font
 
@@ -211,7 +212,8 @@ class FilesScreen(Screen):
         try:
             rel = core.import_file(self.app.ws, path, kind)
         except Exception as e:
-            messagebox.showerror("올리지 못했어요", str(e))
+            what, how = explain.explain(e)
+            T.show_error(self, "파일을 올리지 못했어요", what, how, explain.detail(e))
             return
 
         key = "template_pptx" if kind == "template" else "recipients_xlsx"
@@ -300,8 +302,10 @@ class FilesScreen(Screen):
                     + ("  ·  새 파일을 끌어다 놓으면 바뀌어요." if c.get("dnd") else ""))
             else:
                 c["note"].configure(fg_color=T.AMBER_BG)
-                c["note"].set_text("괄호로 묶인 자리를 찾지 못했어요. "
-                                   "PPT에서 바꿀 곳을 (기업명)처럼 괄호로 감싸 주세요.")
+                c["note"].set_text(
+                    "기업 이름이 들어갈 자리를 찾지 못했어요.  "
+                    "PowerPoint에서 기업마다 달라져야 하는 곳을 (기업명) 처럼 "
+                    "괄호로 감싼 뒤 다시 올려 주세요.")
             c["note"].pack(fill="x", pady=(14, 0))
         else:
             sheet = self.app.reload_sheet()
@@ -419,7 +423,9 @@ class ListScreen(Screen):
         try:
             sheet.save()
         except Exception as e:
-            messagebox.showwarning("저장하지 못했어요", str(e))
+            what, how = explain.explain(e)
+            T.show_error(self, "명단을 저장하지 못했어요", what, how,
+                         explain.detail(e), kind="amber")
         self.refresh()
 
     def _add_row(self):
@@ -430,7 +436,9 @@ class ListScreen(Screen):
         try:
             sheet.save()
         except Exception as e:
-            messagebox.showwarning("저장하지 못했어요", str(e))
+            what, how = explain.explain(e)
+            T.show_error(self, "명단을 저장하지 못했어요", what, how,
+                         explain.detail(e), kind="amber")
         self.refresh()
 
     def on_show(self):
@@ -483,7 +491,7 @@ class ListScreen(Screen):
                 "name":   m["name"] or "-",
                 "email":  m["email"] or "미확인",
                 "cat":    m["category"] or "-",
-                "status": "보낼 예정" if ok else m["reason"],
+                "status": "보낼 곳" if ok else m["reason"],
                 "_muted": not ok,
                 "_color_status": T.G500 if ok else T.AMBER,
             })
@@ -549,8 +557,9 @@ class SlotsScreen(Screen):
 
         if not slots:
             T.Note(self._list,
-                   "PPT에서 괄호로 묶인 자리를 찾지 못했어요. "
-                   "제안서에서 바꿀 곳을 (기업명)처럼 괄호로 감싼 뒤 1단계에서 다시 올려 주세요.",
+                   "제안서에서 바꿀 자리를 찾지 못했어요.  "
+                   "기업마다 달라져야 하는 곳을 PowerPoint에서 (기업명) 처럼 괄호로 "
+                   "감싸 주세요. 그 다음 왼쪽 1단계에서 다시 올리시면 됩니다.",
                    "amber", mark="!", wrap=640).pack(fill="x")
             return
 
@@ -604,7 +613,7 @@ class SlotsScreen(Screen):
         rows = sheet.rows if sheet else []
         if not rows:
             self._name_preview.configure(fg_color=T.G100)
-            self._name_preview.set_text("명단을 올리면 실제 이름을 보여 드릴게요.")
+            self._name_preview.set_text("명단을 올리면 파일 이름이 어떻게 만들어지는지 여기서 보여 드릴게요.")
             return
 
         info = core.preview_filenames(pattern, rows)
@@ -755,7 +764,8 @@ class SlotsScreen(Screen):
 
     def _preview_fail(self, e):
         self._prev_state.configure(text="")
-        messagebox.showerror("만들지 못했어요", str(e))
+        what, how = explain.explain(e)
+        T.show_error(self, "미리보기를 만들지 못했어요", what, how, explain.detail(e))
 
 
 # ══════════════════════════════════════════════════════════
@@ -1022,6 +1032,18 @@ class SendScreen(Screen):
                                             height=130)
         self._rows.pack(fill="both", expand=True, padx=16, pady=(0, 14))
 
+        # 실패한 곳 — 왜 안 됐고 어떻게 하면 되는지
+        self._fail_card = T.Card(self)
+        fh = ctk.CTkFrame(self._fail_card, fg_color="transparent")
+        fh.pack(fill="x", padx=20, pady=(16, 6))
+        self._fail_title = T.subtitle(fh, "안 된 곳")
+        self._fail_title.pack(side="left")
+        T.Btn(fh, "안 된 곳만 다시 보내기", "secondary", small=True, width=150,
+              command=self._retry_failed).pack(side="right")
+        self._fail_list = ctk.CTkScrollableFrame(self._fail_card,
+                                                 fg_color="transparent", height=120)
+        self._fail_list.pack(fill="both", expand=True, padx=16, pady=(0, 14))
+
         # 결과
         self._after_card = T.Card(self, fg_color=T.BLUE_BG)
         ab = ctk.CTkFrame(self._after_card, fg_color="transparent")
@@ -1045,7 +1067,7 @@ class SendScreen(Screen):
     def _layout(self, state: str):
         self._state = state
         for w in (self._check, self._stats, self._opts, self._prog_card,
-                  self._list_card, self._after_card):
+                  self._list_card, self._fail_card, self._after_card):
             w.pack_forget()
         self._btn_send.pack_forget()
         self._btn_hint.pack_forget()
@@ -1062,7 +1084,10 @@ class SendScreen(Screen):
             self._list_card.pack(fill="both", expand=True)
         else:  # done
             self._stats.pack(fill="x", pady=(0, 12))
-            self._list_card.pack(fill="both", expand=True, pady=(0, 12))
+            if getattr(self, "_fails", None):
+                self._fail_card.pack(fill="x", pady=(0, 12))
+            else:
+                self._list_card.pack(fill="both", expand=True, pady=(0, 12))
             self._after_card.pack(fill="x")
 
     def _on_gap(self, v):
@@ -1098,10 +1123,10 @@ class SendScreen(Screen):
             self._check.configure(fg_color=T.AMBER_BG)
             self._check.set_text("· " + "\n· ".join(problems))
             self._btn_send.configure(state="disabled")
-            self._btn_hint.configure(text="위 내용을 채우면 보낼 수 있어요.")
+            self._btn_hint.configure(text="위에 적힌 것을 채우면 보낼 수 있어요.")
         else:
             self._check.configure(fg_color=T.GREEN_BG)
-            self._check.set_text("확인해야 할 것을 모두 통과했어요.")
+            self._check.set_text("다 됐어요. 이제 보내기만 하면 됩니다.")
             self._btn_send.configure(state="normal" if n else "disabled")
             self._btn_hint.configure(
                 text="보내는 중에 멈출 수 있고, 다시 시작하면 보낸 곳은 건너뛰어요.")
@@ -1113,22 +1138,22 @@ class SendScreen(Screen):
     def _check_all(self, cfg: dict, sheet) -> list[str]:
         out = []
         if not engine.gmail_connected():
-            out.append("Gmail이 연결되지 않았어요 — 오른쪽 위 계정 칸을 눌러 주세요.")
+            out.append("Gmail을 연결해야 보낼 수 있어요. 오른쪽 위 계정 칸을 눌러 주세요.")
         if not cfg.get("template_pptx"):
-            out.append("제안서 PPT가 없어요 — 1단계에서 올려 주세요.")
+            out.append("제안서 PPT를 아직 안 올렸어요. 왼쪽 1단계에서 올려 주세요.")
         if not sheet:
-            out.append("명단이 없어요 — 1단계에서 올려 주세요.")
+            out.append("기업 명단을 아직 안 올렸어요. 왼쪽 1단계에서 올려 주세요.")
         if not cfg.get("col_email"):
-            out.append("이메일 열을 고르지 않았어요 — 2단계에서 골라 주세요.")
+            out.append("명단의 어느 칸이 이메일인지 알려 주세요. 왼쪽 2단계에서 고를 수 있어요.")
         smap = {k: v for k, v in (cfg.get("slot_map") or {}).items() if v}
         if not smap:
-            out.append("제안서에서 바꿀 자리를 한 개도 짝짓지 않았어요 — 3단계를 확인해 주세요.")
+            out.append("제안서에서 기업 이름이 들어갈 자리를 아직 안 정했어요. 왼쪽 3단계에서 골라 주세요.")
         if not cfg.get("email_subject", "").strip():
-            out.append("메일 제목이 비어 있어요 — 4단계에서 써 주세요.")
+            out.append("메일 제목이 비어 있어요. 왼쪽 4단계에서 써 주세요.")
         if not cfg.get("email_body", "").strip():
-            out.append("메일 본문이 비어 있어요 — 4단계에서 써 주세요.")
+            out.append("메일 본문이 비어 있어요. 왼쪽 4단계에서 써 주세요.")
         if not engine.powerpoint_available():
-            out.append("PowerPoint를 찾지 못했어요 — PDF로 바꿀 수 없어요.")
+            out.append("이 컴퓨터에 PowerPoint가 없어요. 제안서를 PDF로 바꾸려면 PowerPoint가 있어야 해요.")
 
         if sheet and sheet.rows:
             info = core.preview_filenames(
@@ -1153,6 +1178,7 @@ class SendScreen(Screen):
             return
 
         self._stop.clear()
+        self._fails = []                      # (기업, 단계, 무슨일, 어떻게, 원문)
         self._btn_stop.configure(state="normal")
         self._layout("running")
         self._build_rows()
@@ -1174,9 +1200,23 @@ class SendScreen(Screen):
         def done(sent, failed):
             self.after(0, lambda: self._on_done(sent, failed))
 
+        def fail(name, step, exc):
+            if exc is not None:
+                what, how = explain.explain(exc)
+                raw = explain.detail(exc)
+            elif step == engine.STEP_PDF:
+                what = "PDF로 바꾸지 못했어요."
+                how = ("열려 있는 PowerPoint 창을 모두 닫고 다시 보내 주세요.\n"
+                       "그래도 안 되면 컴퓨터를 다시 켠 뒤 시도해 보세요.")
+                raw = ""
+            else:
+                what, how, raw = "처리하지 못했어요.", "다시 시도해 주세요.", ""
+            self.after(0, lambda: self._fails.append(
+                {"name": name, "step": step, "what": what, "how": how, "raw": raw}))
+
         threading.Thread(
             target=engine.run_send,
-            args=(self.app.ws, cfg, targets, sheet, log, progress, done),
+            args=(self.app.ws, cfg, targets, sheet, log, progress, done, fail),
             kwargs={"stop_event": self._stop},
             daemon=True).start()
 
@@ -1236,9 +1276,63 @@ class SendScreen(Screen):
         self._s2.set_value(failed, T.RED if failed else T.G400); self._s2.set_key("실패")
         self._s3.set_value(max(0, len(self._targets) - sent - failed), T.G400)
         self._s3.set_key("안 보냄")
+        self._draw_fails()
         self._layout("done")
         self.app.refresh_rail()
         self.app.set_last_sent(datetime.now())
+
+    def _draw_fails(self):
+        for w in self._fail_list.winfo_children():
+            w.destroy()
+        fails = getattr(self, "_fails", [])
+        self._fail_title.configure(text=f"안 된 곳 {len(fails)}곳")
+
+        # 같은 이유끼리 묶어서 보여 준다 — 45곳이 같은 이유면 45줄은 읽기 어렵다
+        groups: dict[str, dict] = {}
+        for f in fails:
+            g = groups.setdefault(f["what"], {"how": f["how"], "raw": f["raw"], "who": []})
+            if f["name"]:
+                g["who"].append(f["name"])
+
+        for what, g in groups.items():
+            card = ctk.CTkFrame(self._fail_list, fg_color=T.G50, corner_radius=12)
+            card.pack(fill="x", pady=(0, 8))
+            box = ctk.CTkFrame(card, fg_color="transparent")
+            box.pack(fill="x", padx=14, pady=12)
+
+            top = ctk.CTkFrame(box, fg_color="transparent")
+            top.pack(fill="x")
+            T.label(top, what, T.G900, 13, True, wraplength=440).pack(side="left")
+            if g["raw"]:
+                T.Btn(top, "자세히", "ghost", small=True, width=52,
+                      command=lambda w=what, gg=g: T.show_error(
+                          self, "안 된 이유", w, gg["how"], gg["raw"])).pack(side="right")
+
+            if g["who"]:
+                names = ", ".join(g["who"][:6]) + (" 외" if len(g["who"]) > 6 else "")
+                T.label(box, f"{len(g['who'])}곳 — {names}", T.G500, 12,
+                        wraplength=460).pack(anchor="w", pady=(4, 0))
+            T.label(box, g["how"], T.G700, 12, wraplength=460).pack(anchor="w", pady=(6, 0))
+
+    def _retry_failed(self):
+        """안 된 곳은 명단에 '발송실패' 로 적혀 있으니, 그 표시만 지우면 다시 대상이 된다."""
+        sheet = self.app.sheet
+        if not sheet:
+            return
+        n = 0
+        for i, row in enumerate(sheet.rows):
+            if (row.get(core.STATUS_COL, "") or "").strip() == "발송실패":
+                sheet.set(i, core.STATUS_COL, "")
+                n += 1
+        try:
+            sheet.save()
+        except Exception as e:
+            what, how = explain.explain(e)
+            T.show_error(self, "명단을 저장하지 못했어요", what, how, explain.detail(e))
+            return
+        self._fails = []
+        self._prepare()
+        self.app.log(f"{n}곳을 다시 보낼 수 있게 했어요. 아래 버튼을 눌러 주세요.")
 
 
 # ══════════════════════════════════════════════════════════
@@ -1320,4 +1414,5 @@ class BounceScreen(Screen):
     def _fail(self, e):
         self._btn.configure(state="normal")
         self._state.configure(text="")
-        messagebox.showerror("확인하지 못했어요", str(e))
+        what, how = explain.explain(e)
+        T.show_error(self, "반송을 확인하지 못했어요", what, how, explain.detail(e))

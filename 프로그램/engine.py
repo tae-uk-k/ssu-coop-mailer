@@ -20,6 +20,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape as _xml_escape, unescape as _xml_unescape
 
 import core
+import explain
 from core import (STATUS_COL, first_email, pick_josa, replace_placeholders,
                   resolve, safe_filename)
 
@@ -446,9 +447,16 @@ def build_one(ws: str, cfg: dict, row: dict, ppt: PowerPointSession | None,
 
 
 def run_send(ws: str, cfg: dict, targets: list[dict], sheet,
-             log_fn, progress_fn, done_fn,
+             log_fn, progress_fn, done_fn, fail_fn=None,
              stop_event: threading.Event | None = None) -> None:
-    """targets 는 core.classify() 결과에서 보낼 것만 걸러낸 목록."""
+    """targets 는 core.classify() 결과에서 보낼 것만 걸러낸 목록.
+
+    fail_fn(기업이름, 단계, 예외) 는 실패한 곳을 화면이 모아 두는 데 쓴다.
+    나중에 결과 화면에서 '왜 안 됐고 어떻게 하면 되는지' 를 보여 준다.
+    """
+    if fail_fn is None:
+        def fail_fn(*_a, **_k):
+            pass
     sent = failed = 0
     try:
         total = len(targets)
@@ -488,7 +496,8 @@ def run_send(ws: str, cfg: dict, targets: list[dict], sheet,
                     progress_fn(i, total, name, STEP_PPT, "ok")
                 except Exception as e:
                     progress_fn(i, total, name, STEP_PPT, "bad")
-                    log_fn(f"[{name}] 제안서를 만들지 못했어요 — {e}")
+                    log_fn(f"[{name}] 제안서를 만들지 못했어요 — {explain.short(e)}")
+                    fail_fn(name, STEP_PPT, e)
                     failed += 1
                     continue
 
@@ -505,8 +514,8 @@ def run_send(ws: str, cfg: dict, targets: list[dict], sheet,
                         pass
                 else:
                     progress_fn(i, total, name, STEP_PDF, "bad")
-                    log_fn(f"[{name}] PDF로 바꾸지 못했어요 — "
-                           "열려 있는 PowerPoint 창을 모두 닫고 다시 보내 주세요.")
+                    log_fn(f"[{name}] PDF로 바꾸지 못했어요.")
+                    fail_fn(name, STEP_PDF, None)
                     failed += 1
                     continue
 
@@ -517,7 +526,7 @@ def run_send(ws: str, cfg: dict, targets: list[dict], sheet,
                     progress_fn(i, total, name, STEP_SHEET, "ok")
                 except Exception as e:
                     progress_fn(i, total, name, STEP_SHEET, "bad")
-                    log_fn(f"[{name}] 명단 기록 실패 — {e}")
+                    log_fn(f"[{name}] 명단에 기록하지 못했어요 — {explain.short(e)}")
 
                 # 4. 메일 보내기
                 progress_fn(i, total, name, STEP_MAIL, "run")
@@ -531,7 +540,8 @@ def run_send(ws: str, cfg: dict, targets: list[dict], sheet,
                     _save_quietly(sheet, log_fn)
                 except Exception as e:
                     progress_fn(i, total, name, STEP_MAIL, "bad")
-                    log_fn(f"[{name}] 메일을 보내지 못했어요 — {e}")
+                    log_fn(f"[{name}] 메일을 보내지 못했어요 — {explain.short(e)}")
+                    fail_fn(name, STEP_MAIL, e)
                     sheet.set(idx, STATUS_COL, "발송실패")
                     failed += 1
                     _save_quietly(sheet, log_fn)
@@ -544,7 +554,8 @@ def run_send(ws: str, cfg: dict, targets: list[dict], sheet,
         _save_quietly(sheet, log_fn, loud=True)
 
     except Exception as e:
-        log_fn(f"[문제가 생겼어요] {e}")
+        log_fn(f"[문제가 생겼어요] {explain.short(e)}")
+        fail_fn("", 0, e)
     finally:
         done_fn(sent, failed)
 
@@ -557,7 +568,7 @@ def _save_quietly(sheet, log_fn, loud: bool = False) -> None:
     except PermissionError:
         log_fn("명단 파일이 다른 프로그램에서 열려 있어 저장하지 못했습니다.")
     except Exception as e:
-        log_fn(f"명단 저장 실패 — {e}")
+        log_fn("명단을 저장하지 못했어요 — " + explain.short(e))
 
 
 # ──────────────────────────────────────────────────────────
@@ -693,6 +704,6 @@ def check_bounces(cfg: dict, sheet, log_fn, max_messages: int = 200) -> list[dic
         sheet.save()
         log_fn(f"{len(hits)}곳을 명단에 '반송됨'으로 표시했어요.")
     except Exception as e:
-        log_fn(f"명단 저장 실패 — {e}")
+        log_fn("명단을 저장하지 못했어요 — " + explain.short(e))
 
     return hits

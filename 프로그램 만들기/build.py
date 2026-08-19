@@ -91,7 +91,9 @@ def main() -> int:
     # credentials.json 은 넣는다 — 개인정보가 아니라 프로그램 자체의 신분증이고,
     # 이게 없으면 구글 로그인 창조차 안 뜬다. 대신 GitHub 같은 공개된 곳에는
     # 올리지 않는다. 공개되면 구글이 키를 회수해 전원이 로그인을 못 하게 된다.
-    zip_path = ROOT / "메일자동화_나눠주기.zip"
+    share_dir = ROOT / "나눠줄 파일"
+    share_dir.mkdir(exist_ok=True)
+    zip_path = share_dir / "메일자동화_나눠주기.zip"
     if zip_path.exists():
         zip_path.unlink()
     has_cred = False
@@ -113,13 +115,17 @@ def main() -> int:
     else:
         print("  [알림] 설정/credentials.json 이 없어 넣지 못했습니다.")
 
+    # 중간 산물은 지운다. 다시 만들면 되고, 놔두면 200MB 넘게 쌓인다.
+    for junk in (ROOT / "dist", ROOT / "build", out):
+        shutil.rmtree(junk, ignore_errors=True)
+
     print()
-    print(f"다 됐습니다 → {out}")
-    print("나눠 주실 때는 메일자동화_나눠주기.zip 을 드라이브에 올려 주세요.")
+    print("다 됐습니다.")
+    print(f"이 파일을 구글 드라이브에 올려 링크를 공유하세요 → {zip_path}")
     print("(로그인 열쇠 token.json 과 계정 정보는 빠져 있습니다)")
 
     try:
-        subprocess.Popen(["explorer", str(out)])
+        subprocess.Popen(["explorer", str(share_dir)])
     except Exception:
         pass
     return 0

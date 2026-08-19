@@ -86,25 +86,37 @@ def main() -> int:
     if guide.exists():
         shutil.copy2(guide, out / "사용설명서.md")
 
-    # 나눠 줄 zip 을 만든다. 공개 저장소에 올릴 수 있도록 credentials.json 은 뺀다.
-    zip_path = ROOT / "메일자동화.zip"
+    # 국원들에게 나눠 줄 zip. 구글 드라이브에 올려 링크를 공유한다.
+    #
+    # credentials.json 은 넣는다 — 개인정보가 아니라 프로그램 자체의 신분증이고,
+    # 이게 없으면 구글 로그인 창조차 안 뜬다. 대신 GitHub 같은 공개된 곳에는
+    # 올리지 않는다. 공개되면 구글이 키를 회수해 전원이 로그인을 못 하게 된다.
+    zip_path = ROOT / "메일자동화_나눠주기.zip"
     if zip_path.exists():
         zip_path.unlink()
+    has_cred = False
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(out.rglob("*")):
             if not f.is_file():
                 continue
             rel = f.relative_to(out)
+            if rel.name == "token.json":
+                continue            # 로그인 열쇠 — 절대 공유 금지
             if rel.name == "credentials.json":
-                continue            # 구글 인증 파일은 따로 전달한다
+                has_cred = True
             z.write(f, Path("메일자동화") / rel)
+
     print(f"  나눠 줄 파일: {zip_path.name} ({zip_path.stat().st_size / 1e6:.0f}MB)")
-    print("  (구글 인증 파일 credentials.json 은 빠져 있습니다 — 따로 전달하세요)")
+    if has_cred:
+        print("  구글 인증 파일이 들어 있습니다 → 구글 드라이브에 올려 링크를 공유하세요.")
+        print("  ※ GitHub 같은 공개된 곳에는 올리지 마세요.")
+    else:
+        print("  [알림] 설정/credentials.json 이 없어 넣지 못했습니다.")
 
     print()
     print(f"다 됐습니다 → {out}")
-    print("이 '배포' 폴더를 통째로 전달하거나, 메일자동화.zip 을 올려 나눠 주세요.")
-    print("(계정 정보가 든 token.json 과 config.json 은 넣지 않았습니다)")
+    print("나눠 주실 때는 메일자동화_나눠주기.zip 을 드라이브에 올려 주세요.")
+    print("(로그인 열쇠 token.json 과 계정 정보는 빠져 있습니다)")
 
     try:
         subprocess.Popen(["explorer", str(out)])

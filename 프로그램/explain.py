@@ -38,6 +38,14 @@ def explain(e: BaseException, doing: str = "") -> Explained:
 
     if isinstance(e, FileNotFoundError) or "no such file" in low:
         target = _filename(msg)
+        # 구글 인증 파일은 사용자가 올리는 파일이 아니라 안내가 달라야 한다
+        if "credentials" in low or "credentials" in target.lower():
+            return ("구글 인증 파일(credentials.json)이 없어요.",
+                    "이 파일이 있어야 구글 로그인 창을 띄울 수 있어요.\n"
+                    "대외협력국장에게 파일을 받아 '설정' 폴더에 넣어 주세요.")
+        if "token" in low or "token" in target.lower():
+            return ("로그인 기록이 없어요.",
+                    "오른쪽 위 계정 칸을 눌러 Gmail에 연결해 주세요.")
         return (f"{target or '파일'}을(를) 찾지 못했어요.",
                 "1단계에서 파일을 다시 올려 주세요.\n"
                 "원본을 지우거나 옮기셨다면 새로 올리시면 됩니다.")

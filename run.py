@@ -3,18 +3,17 @@
 
   실행하기.bat 을 더블클릭하거나,  pythonw run.py
 
-이 파일 이름만 영어인 이유가 있습니다. 배치 파일(.bat)은 한글이 들어가면
-쓰는 PC의 언어 설정에 따라 깨져서 실행이 안 되는 경우가 있습니다.
-그래서 배치 파일은 영어로만 두고, 한글 안내는 여기(파이썬)에서 합니다.
+────────────────────────────────────────────────────────────
+이 파일은 exe 안에 박혀서 나가므로 원격으로 고칠 수 없습니다.
+그래서 여기에는 '프로그램 폴더를 찾아 넘긴다' 만 두고,
+실제로 하는 일은 전부 프로그램/boot.py 에 있습니다.
+boot.py 는 자동 갱신으로 고칠 수 있습니다.
 
-실제 코드는 '프로그램' 폴더 안에 있습니다.
+  이 파일을 고칠 일은 사실상 없습니다. 고치면 exe 를 다시 만들어야 합니다.
+────────────────────────────────────────────────────────────
+
 설정은 '설정' 폴더, 행사별 자료는 '행사별 작업' 폴더에 저장됩니다.
-
-켤 때마다 새 코드가 있는지 조용히 확인해 갈아끼웁니다. 자세한 것은
-프로그램/updater.py 를 보세요. 인터넷이 안 되면 그냥 넘어갑니다.
 """
-import importlib
-import json
 import sys
 from pathlib import Path
 
@@ -26,29 +25,12 @@ else:
 CODE_DIR = ROOT / "프로그램"
 sys.path.insert(0, str(CODE_DIR))
 
-# 없으면 프로그램이 안 켜지는 것들
-REQUIRED = [
-    ("customtkinter",   "화면",            "customtkinter"),
-    ("openpyxl",        "엑셀 명단",        "openpyxl"),
-    ("googleapiclient", "Gmail 발송",       "google-api-python-client"),
-    ("google_auth_oauthlib", "Gmail 로그인", "google-auth-oauthlib"),
-]
-
-# 없어도 켜지지만 기능이 빠지는 것들
-OPTIONAL = [
-    ("win32com",     "PDF 변환",      "pywin32"),
-    ("tkinterdnd2",  "드래그앤드롭",   "tkinterdnd2"),
-]
-
-NEEDED = ("app.py", "core.py", "engine.py", "theme.py", "screens.py")
+# 이 파일들이 없으면 아무것도 못 한다
+NEEDED = ("boot.py", "app.py", "core.py", "engine.py", "theme.py", "screens.py")
 
 
 def _tell(title: str, body: str) -> None:
-    """켜지기 전에 생긴 문제를 알린다.
-
-    pythonw 로 켜면 검은 콘솔 창이 안 뜨는 대신 print 도 안 보인다.
-    그래서 창으로 띄우고, 그마저 안 되면 콘솔로 떨어진다.
-    """
+    """boot.py 조차 못 불렀을 때만 쓰는 최소한의 알림."""
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -59,103 +41,16 @@ def _tell(title: str, body: str) -> None:
         return
     except Exception:
         pass
-
-    print()
-    print("=" * 56)
-    print("  " + title)
-    print("=" * 56)
-    print(body)
-    print()
+    print("\n" + title + "\n" + body + "\n")
     try:
-        input("  엔터를 누르면 닫힙니다... ")
+        input("엔터를 누르면 닫힙니다... ")
     except Exception:
         pass
-
-
-def _check():
-    missing, weak = [], []
-    for mod, why, pkg in REQUIRED:
-        try:
-            importlib.import_module(mod)
-        except Exception:
-            missing.append((why, pkg))
-    for mod, why, pkg in OPTIONAL:
-        try:
-            importlib.import_module(mod)
-        except Exception:
-            weak.append((why, pkg))
-    return missing, weak
-
-
-def _update_url() -> str:
-    """설정/config.json 의 update_url. 비어 있으면 갱신을 아예 하지 않는다."""
-    try:
-        cfg = json.loads((ROOT / "설정" / "config.json").read_text(encoding="utf-8"))
-        return str(cfg.get("update_url", "") or "")
-    except Exception:
-        return ""
-
-
-def _save_update_url(url: str) -> None:
-    try:
-        p = ROOT / "설정" / "config.json"
-        cfg = json.loads(p.read_text(encoding="utf-8"))
-        cfg["update_url"] = url
-        p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-
-def _is_dev() -> bool:
-    """여기가 코드를 고치는 폴더인가.
-
-    개발 폴더에서 갱신기가 돌면, 고치던 코드가 릴리스 버전으로 덮어써진다.
-    .git 이 있으면 개발 중으로 보고 갱신을 건너뛴다.
-    (exe 로 만들어 쓰는 국원 PC 에는 .git 이 없으므로 정상 갱신된다)
-    """
-    return not getattr(sys, "frozen", False) and (ROOT / ".git").exists()
-
-
-def _self_update() -> str:
-    """켤 때 한 번. 무슨 일이 있어도 프로그램이 켜지는 걸 막지 않는다."""
-    if _is_dev():
-        return ""
-
-    try:
-        import updater
-    except Exception:
-        return ""
-
-    note = ""
-    try:
-        note = updater.rollback_if_broken(ROOT, CODE_DIR)
-    except Exception:
-        pass
-
-    url = _update_url()
-    if not url:
-        return note
-    try:
-        r = updater.check_and_apply(ROOT, CODE_DIR, url)
-        if r.get("next_url"):
-            _save_update_url(r["next_url"])      # 저장소를 옮겼을 때
-        if r.get("updated"):
-            note = "새 버전 " + r["version"] + " 을 적용했어요."
-            if r.get("notes"):
-                note += "  " + r["notes"]
-    except Exception:
-        pass
-    return note
 
 
 def _ensure_code() -> str:
-    """'프로그램' 폴더가 성하지 않으면 직전 백업으로 되살린다.
-
-    이 파일(run.py)은 exe 안에 박혀 있어 원격으로 못 고친다. 그래서
-    코드가 통째로 사라지는 최악의 경우까지 여기서 스스로 수습해야 한다.
-    """
-    have = CODE_DIR.exists() and all((CODE_DIR / n).exists() for n in NEEDED)
-    if have:
+    """'프로그램' 폴더가 성하지 않으면 직전 백업으로 되살린다."""
+    if CODE_DIR.exists() and all((CODE_DIR / n).exists() for n in NEEDED):
         return ""
 
     backup = ROOT / "프로그램_직전"
@@ -173,10 +68,7 @@ def _ensure_code() -> str:
             pass
 
     lost = [n for n in NEEDED if not (CODE_DIR / n).exists()]
-    body = [
-        "'" + CODE_DIR.name + "' 폴더에 있어야 할 파일이 없습니다.",
-        "",
-    ]
+    body = ["'" + CODE_DIR.name + "' 폴더에 있어야 할 파일이 없습니다.", ""]
     body += ["  · " + n for n in lost]
     body += [
         "",
@@ -191,39 +83,14 @@ def _ensure_code() -> str:
 
 def main() -> int:
     fixed = _ensure_code()
-    missing, weak = _check()
-
-    if missing:
-        body = ["아래가 설치되어 있지 않습니다.", ""]
-        body += ["  · " + why + " → " + pkg for why, pkg in missing]
-        body += [
-            "",
-            "아래 한 줄을 복사해 실행하면 한 번에 설치됩니다.",
-            "",
-            "pip install " + " ".join(pkg for _, pkg in missing + weak),
-        ]
-        _tell("프로그램을 켤 수 없습니다", "\n".join(body))
-        return 1
-
-    # 코드 갱신은 화면을 만들기 전에 — 그래야 이번 실행부터 새 코드가 쓰인다
-    note = _self_update()
-    if fixed:
-        note = (fixed + "  " + note).strip()
-    if weak:
-        note = (note + "  " + "  ".join(
-            why + " 기능이 꺼집니다 (pip install " + pkg + ")"
-            for why, pkg in weak)).strip()
-
     try:
-        import app
+        import boot
     except Exception as e:
         _tell("프로그램을 켜다가 문제가 생겼습니다",
               type(e).__name__ + ": " + str(e) + "\n\n"
               "받으신 폴더를 통째로 다시 받으면 대개 해결됩니다.")
         return 1
-
-    app.main(startup_note=note)
-    return 0
+    return boot.main(ROOT, CODE_DIR, fixed)
 
 
 if __name__ == "__main__":

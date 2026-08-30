@@ -616,7 +616,11 @@ class SlotsScreen(Screen):
             self._name_preview.set_text("명단을 올리면 파일 이름이 어떻게 만들어지는지 여기서 보여 드릴게요.")
             return
 
-        info = core.preview_filenames(pattern, rows)
+        cfg = self.app.cfg
+        info = core.preview_filenames(
+            pattern, rows,
+            email_col=cfg.get("col_email", ""),
+            name_col=core._display_name_column(sheet, cfg) if sheet else "")
         first = info["first"] + ".pdf"
 
         if info["leftover"]:
@@ -1230,7 +1234,9 @@ class SendScreen(Screen):
 
         if sheet and sheet.rows:
             info = core.preview_filenames(
-                cfg.get("file_name_pattern") or "제안서", sheet.rows)
+                cfg.get("file_name_pattern") or "제안서", sheet.rows,
+                email_col=cfg.get("col_email", ""),
+                name_col=core._display_name_column(sheet, cfg))
             if info["leftover"]:
                 out.append(
                     "파일 이름 규칙에 명단에 없는 열이 있어요: "
@@ -1245,23 +1251,39 @@ class SendScreen(Screen):
 
     @staticmethod
     def _dupe_message(info: dict) -> str:
-        """이름이 겹칠 때 — 원인에 따라 고칠 곳이 다르므로 나눠서 알려 준다."""
-        겹친곳 = sum(c for _n, c in info["dupes"])
-        예시 = ", ".join(f"'{n}' {c}곳" for n, c in info["dupes"][:3])
-        꼬리 = " 등" if len(info["dupes"]) > 3 else ""
+        """명단에 같은 곳이 여러 번 들어 있을 때.
 
+        이메일까지 같으면 같은 곳에 여러 번 보내게 되므로 뜻이 아주 다르다.
+        어느 기업이 몇 곳인지 이름을 그대로 보여 준다.
+        """
         if not info["has_var"]:
-            # 규칙 자체에 기업마다 달라지는 값이 없다 → 전부 같은 이름
             return (f"제안서 {info['total']}곳이 모두 '{info['first']}.pdf' 라는 "
                     "같은 이름으로 만들어져요. "
                     "3단계 '만들어질 파일 이름' 에서 파란 칸을 눌러 "
                     "{{업체명}} 같은 값을 넣어 주세요.")
 
-        # 규칙은 멀쩡한데 명단에 같은 값이 여러 번 들어 있다
-        return (f"파일 이름이 겹치는 곳이 {겹친곳}곳 있어요 ({예시}{꼬리}). "
-                "명단에 같은 기업이 여러 번 들어 있는 것 같아요. "
-                "2단계에서 확인해 주세요. "
-                "그냥 보내도 파일이 사라지지는 않고 뒤에 _2, _3 이 붙습니다.")
+        같음 = [d for d in info["dupes"] if d["same_email"]]
+        다름 = [d for d in info["dupes"] if not d["same_email"]]
+        줄 = []
+
+        if 같음:
+            총 = sum(d["count"] for d in 같음)
+            목록 = ", ".join(
+                f"{d['company'] or d['name']} {d['count']}곳" for d in 같음[:4])
+            꼬리 = f" 외 {len(같음) - 4}곳" if len(같음) > 4 else ""
+            줄.append(f"명단에 같은 곳이 두 번 넘게 들어 있어요 — {목록}{꼬리}. "
+                      f"이메일도 같아서 이대로 보내면 같은 주소로 여러 통이 갑니다"
+                      f"(모두 {총}통). 2단계에서 지워 주세요.")
+
+        if 다름:
+            목록 = ", ".join(
+                f"{d['company'] or d['name']} {d['count']}곳" for d in 다름[:4])
+            꼬리 = f" 외 {len(다름) - 4}곳" if len(다름) > 4 else ""
+            줄.append(f"이름은 같은데 이메일이 다른 곳이 있어요 — {목록}{꼬리}. "
+                      "담당자가 여러 분인 것 같아요. 맞다면 그대로 보내시면 되고, "
+                      "제안서 파일은 뒤에 _2 가 붙어 구분됩니다.")
+
+        return "  ".join(줄)
 
     # ── 발송 ──
     def _start(self):

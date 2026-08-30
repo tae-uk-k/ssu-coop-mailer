@@ -639,7 +639,8 @@ def unique_name(base: str, used: set[str]) -> str:
     return name
 
 
-def preview_filenames(pattern: str, rows: list[dict], limit: int = 500) -> dict:
+def preview_filenames(pattern: str, rows: list[dict], limit: int = 500,
+                      email_col: str = "", name_col: str = "") -> dict:
     """이름 규칙이 기업마다 다른 이름을 만드는지 미리 따져 본다.
 
     이름이 겹칠 때 원인은 둘 중 하나이고, 고칠 방법이 서로 다르다.
@@ -653,12 +654,32 @@ def preview_filenames(pattern: str, rows: list[dict], limit: int = 500) -> dict:
     for n in names:
         left |= placeholder_names(n)
 
-    # 겹치는 이름과 그 개수
-    seen: dict[str, int] = {}
-    for n in names:
-        seen[n] = seen.get(n, 0) + 1
-    dupes = sorted(((n, c) for n, c in seen.items() if c > 1),
-                   key=lambda x: -x[1])
+    # 겹치는 이름 — 어느 기업이 몇 곳인지, 이메일도 같은지까지 본다.
+    #   같은 이메일  → 명단에 잘못 들어간 중복. 그대로 두면 같은 곳에 여러 번 간다
+    #   다른 이메일  → 담당자가 여러 분. 일부러 그런 것일 수 있다
+    where: dict[str, list[int]] = {}
+    for i, n in enumerate(names):
+        where.setdefault(n, []).append(i)
+
+    dupes = []
+    for n, idxs in where.items():
+        if len(idxs) < 2:
+            continue
+        mails = []
+        if email_col:
+            for i in idxs:
+                m = first_email(sample[i].get(email_col, "")).lower()
+                if m and m not in mails:
+                    mails.append(m)
+        dupes.append({
+            "name":       n,
+            "count":      len(idxs),
+            "company":    (sample[idxs[0]].get(name_col, "") or "").strip()
+                          if name_col else "",
+            "emails":     mails,
+            "same_email": len(mails) == 1,
+        })
+    dupes.sort(key=lambda d: -d["count"])
 
     # 규칙에 열이 하나라도 들어 있나 (조사가 붙은 것도 인정)
     has_var = bool(placeholder_names(pattern))

@@ -639,19 +639,38 @@ def unique_name(base: str, used: set[str]) -> str:
     return name
 
 
-def preview_filenames(pattern: str, rows: list[dict], limit: int = 200) -> dict:
-    """이름 규칙이 기업마다 다른 이름을 만드는지 미리 따져 본다."""
+def preview_filenames(pattern: str, rows: list[dict], limit: int = 500) -> dict:
+    """이름 규칙이 기업마다 다른 이름을 만드는지 미리 따져 본다.
+
+    이름이 겹칠 때 원인은 둘 중 하나이고, 고칠 방법이 서로 다르다.
+      · 규칙에 기업마다 달라지는 값이 아예 없다   → 규칙을 고쳐야 한다
+      · 규칙은 멀쩡한데 명단에 같은 값이 여러 번   → 명단을 고쳐야 한다
+    """
     sample = rows[:limit]
     names = [safe_filename(replace_placeholders(pattern, r)) for r in sample]
+
     left = set()
     for n in names:
         left |= placeholder_names(n)
+
+    # 겹치는 이름과 그 개수
+    seen: dict[str, int] = {}
+    for n in names:
+        seen[n] = seen.get(n, 0) + 1
+    dupes = sorted(((n, c) for n, c in seen.items() if c > 1),
+                   key=lambda x: -x[1])
+
+    # 규칙에 열이 하나라도 들어 있나 (조사가 붙은 것도 인정)
+    has_var = bool(placeholder_names(pattern))
+
     return {
         "names":    names,
         "first":    names[0] if names else "",
         "unique":   len(set(names)),
         "total":    len(names),
         "leftover": sorted(left),          # 엑셀에 없는 열을 적었을 때
+        "dupes":    dupes,                 # [(이름, 몇 곳), …]
+        "has_var":  has_var,               # 규칙에 {{열}} 이 들어 있나
     }
 
 

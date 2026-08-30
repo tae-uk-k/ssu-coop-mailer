@@ -625,12 +625,23 @@ class SlotsScreen(Screen):
                 f"{first}\n"
                 f"명단에 없는 열이에요: {', '.join('{{'+c+'}}' for c in info['leftover'])}"
                 "  ·  아래 파란 칸을 눌러 넣어 주세요.")
-        elif info["unique"] < info["total"]:
+        elif info["dupes"] and not info["has_var"]:
+            # 규칙에 기업마다 달라지는 값이 없다 → 전부 같은 이름
             self._name_preview.configure(fg_color=T.AMBER_BG)
             self._name_preview.set_text(
                 f"{first}\n"
-                f"{info['total']}곳 중 {info['unique']}가지 이름만 나와요. "
-                "기업마다 달라지는 값을 넣지 않으면 파일이 서로 덮어써져요.")
+                f"{info['total']}곳이 모두 이 한 이름으로 만들어져요. "
+                "아래 파란 칸을 눌러 기업마다 달라지는 값을 넣어 주세요.")
+        elif info["dupes"]:
+            # 규칙은 멀쩡한데 명단에 같은 값이 여러 번 → 명단 쪽 문제
+            겹친곳 = sum(c for _n, c in info["dupes"])
+            예시 = ", ".join(f"'{n}' {c}곳" for n, c in info["dupes"][:2])
+            self._name_preview.configure(fg_color=T.AMBER_BG)
+            self._name_preview.set_text(
+                f"{first}\n"
+                f"이름이 겹치는 곳이 {겹친곳}곳 있어요 ({예시}). "
+                "명단에 같은 기업이 여러 번 있는지 2단계에서 확인해 주세요. "
+                "그냥 보내도 뒤에 _2 가 붙어 파일이 사라지지는 않아요.")
         else:
             self._name_preview.configure(fg_color=T.GREEN_BG)
             self._name_preview.set_text(f"{first}   ·  {info['total']}곳 모두 다른 이름이에요.")
@@ -1149,24 +1160,28 @@ class SendScreen(Screen):
         secs = int(n * (12 + float(cfg.get("send_interval") or 0)))
         self._s3.set_value(f"{max(1, secs // 60)}분" if n else "-")
 
+        # 알림은 세 종류다. 표시(색·기호)와 보내기 버튼이 서로 어긋나면 안 된다.
+        #   막음   빨강 !  — 이대로 보내면 잘못 나간다
+        #   주의   노랑 !  — 보낼 수 있지만 알고 보내시라
+        #   통과   초록 ✓
+        warns = list(getattr(self, "_warns", []))
+        if getattr(self, "_soft", None):
+            tokens = ", ".join(it["token"] for it in self._soft[:4])
+            warns.append(f"제안서의 {tokens} 은(는) 바뀌지 않고 그대로 나갑니다. "
+                         "원래 그런 문구면 괜찮아요. 아니라면 3단계에서 골라 주세요.")
+
         if problems:
-            self._check.configure(fg_color=T.AMBER_BG)
-            self._check.set_text("· " + "\n· ".join(problems))
+            self._set_check("red", "!", "· " + "\n· ".join(problems))
             self._btn_send.configure(state="disabled")
             self._btn_hint.configure(text="위에 적힌 것을 채우면 보낼 수 있어요.")
-        elif getattr(self, "_soft", None):
-            self._check.configure(fg_color=T.BLUE_BG)
-            tokens = ", ".join(it["token"] for it in self._soft[:4])
-            self._check.set_text(
-                f"보낼 수 있어요. 다만 제안서의 {tokens} 은(는) 바뀌지 않고 "
-                "그대로 나갑니다.  원래 그런 문구면 괜찮아요. "
-                "아니라면 왼쪽 3단계에서 골라 주세요.")
+        elif warns:
+            self._set_check("amber", "!",
+                            "보낼 수 있어요. 다만 확인해 주세요.\n· " + "\n· ".join(warns))
             self._btn_send.configure(state="normal" if n else "disabled")
             self._btn_hint.configure(
                 text="보내는 중에 멈출 수 있고, 다시 시작하면 보낸 곳은 건너뛰어요.")
         else:
-            self._check.configure(fg_color=T.GREEN_BG)
-            self._check.set_text("다 됐어요. 이제 보내기만 하면 됩니다.")
+            self._set_check("green", "✓", "다 됐어요. 이제 보내기만 하면 됩니다.")
             self._btn_send.configure(state="normal" if n else "disabled")
             self._btn_hint.configure(
                 text="보내는 중에 멈출 수 있고, 다시 시작하면 보낸 곳은 건너뛰어요.")
@@ -1175,8 +1190,20 @@ class SendScreen(Screen):
         self._v_gap.set(f"{int(float(cfg.get('send_interval') or 0))}초")
         self._layout("ready")
 
+    def _set_check(self, kind: str, mark: str, text: str) -> None:
+        """알림 상자의 색·기호·글을 한 번에 맞춘다.
+
+        경고인데 초록 체크가 붙어 있으면 안 되므로 셋을 따로 두지 않는다.
+        """
+        bg, fg = T.Note._STYLE.get(kind, T.Note._STYLE["blue"])
+        self._check.configure(fg_color=bg)
+        self._check.set_mark(mark, fg)
+        self._check.set_text(text, fg)
+
     def _check_all(self, cfg: dict, sheet) -> list[str]:
         out = []
+        warns: list[str] = []
+        self._warns = warns          # 막지는 않지만 알려 줄 것
         if not engine.gmail_connected():
             out.append("Gmail을 연결해야 보낼 수 있어요. 오른쪽 위 계정 칸을 눌러 주세요.")
         if not cfg.get("template_pptx"):
@@ -1208,12 +1235,33 @@ class SendScreen(Screen):
                 out.append(
                     "파일 이름 규칙에 명단에 없는 열이 있어요: "
                     + ", ".join("{{" + c + "}}" for c in info["leftover"])
-                    + " — 1단계에서 고쳐 주세요.")
-            elif info["unique"] < info["total"]:
-                out.append(
-                    f"파일 이름이 {info['total']}곳 중 {info['unique']}가지뿐이에요. "
-                    "1단계에서 기업마다 달라지는 값을 넣어 주세요.")
+                    + " — 3단계 '만들어질 파일 이름' 에서 고쳐 주세요.")
+            elif info["dupes"]:
+                # 파일이 사라지지는 않으니(뒤에 _2 가 붙음) 막지 않고 알리기만 한다.
+                # 다만 규칙에 아예 값이 없으면 전부 같은 이름이라 막는다.
+                (out if not info["has_var"] else warns).append(
+                    self._dupe_message(info))
         return out
+
+    @staticmethod
+    def _dupe_message(info: dict) -> str:
+        """이름이 겹칠 때 — 원인에 따라 고칠 곳이 다르므로 나눠서 알려 준다."""
+        겹친곳 = sum(c for _n, c in info["dupes"])
+        예시 = ", ".join(f"'{n}' {c}곳" for n, c in info["dupes"][:3])
+        꼬리 = " 등" if len(info["dupes"]) > 3 else ""
+
+        if not info["has_var"]:
+            # 규칙 자체에 기업마다 달라지는 값이 없다 → 전부 같은 이름
+            return (f"제안서 {info['total']}곳이 모두 '{info['first']}.pdf' 라는 "
+                    "같은 이름으로 만들어져요. "
+                    "3단계 '만들어질 파일 이름' 에서 파란 칸을 눌러 "
+                    "{{업체명}} 같은 값을 넣어 주세요.")
+
+        # 규칙은 멀쩡한데 명단에 같은 값이 여러 번 들어 있다
+        return (f"파일 이름이 겹치는 곳이 {겹친곳}곳 있어요 ({예시}{꼬리}). "
+                "명단에 같은 기업이 여러 번 들어 있는 것 같아요. "
+                "2단계에서 확인해 주세요. "
+                "그냥 보내도 파일이 사라지지는 않고 뒤에 _2, _3 이 붙습니다.")
 
     # ── 발송 ──
     def _start(self):

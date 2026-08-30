@@ -208,15 +208,27 @@ class Note(ctk.CTkFrame):
         super().__init__(master, **kw)
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(fill="x", padx=14, pady=11)
+        self._mark = None
         if mark:
-            ctk.CTkLabel(row, text=mark, font=font(13, True), text_color=fg,
-                         width=16).pack(side="left", anchor="n", padx=(0, 8))
+            self._mark = ctk.CTkLabel(row, text=mark, font=font(13, True),
+                                      text_color=fg, width=16)
+            self._mark.pack(side="left", anchor="n", padx=(0, 8))
         self._lbl = ctk.CTkLabel(row, text=text, font=font(13), text_color=fg,
                                  wraplength=wrap, justify="left", anchor="w")
         self._lbl.pack(side="left", fill="x", expand=True)
 
-    def set_text(self, text: str) -> None:
+    def set_text(self, text: str, color: str | None = None) -> None:
         self._lbl.configure(text=text)
+        if color:
+            self._lbl.configure(text_color=color)
+
+    def set_mark(self, mark: str, color: str | None = None) -> None:
+        """경고인데 체크 표시가 붙어 있으면 안 된다."""
+        if self._mark is None:
+            return
+        self._mark.configure(text=mark)
+        if color:
+            self._mark.configure(text_color=color)
 
 
 class Stat(Card):

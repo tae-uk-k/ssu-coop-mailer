@@ -57,6 +57,7 @@ class App(ctk.CTk):
         self.ws: str = ""
         self.sheet = None
         self.slots = None
+        self.sent_log = None        # 어디까지 보냈는지 (명단과 별개로 남는다)
         self._sheet_key = None
         self._log_lines: list[str] = []
         self._busy = False
@@ -359,6 +360,7 @@ class App(ctk.CTk):
         self.cfg = core.load_ws_cfg(name)
         self.sheet = None
         self.slots = None
+        self.sent_log = core.SendLog(name)
         self._sheet_key = None
         self._ws_btn.configure(text=f"  {name}   ▾")
 
@@ -415,10 +417,34 @@ class App(ctk.CTk):
         try:
             self.sheet = core.load_sheet(path)
             self._sheet_key = key
+            self._sync_log()
         except Exception as e:
             self.sheet = None
             self.log("명단을 읽지 못했어요 — " + explain.short(e))
         return self.sheet
+
+    def _sync_log(self):
+        """명단을 읽을 때마다 발송 기록과 맞춘다.
+
+        새 명단을 올리면 '발송상태' 열이 없다. 기록에서 다시 채워 줘야
+        이미 보낸 곳에 또 보내지 않는다. 반대로 엑셀에만 표시가 있으면
+        기록으로 들여온다.
+        """
+        if not (self.sheet and self.ws):
+            return
+        col = self.cfg.get("col_email", "")
+        if not col:
+            return
+        if self.sent_log is None:
+            self.sent_log = core.SendLog(self.ws)
+        self.sent_log.absorb(self.sheet, col)          # 엑셀 → 기록
+        n = self.sent_log.apply_to(self.sheet, col)    # 기록 → 엑셀
+        if n:
+            try:
+                self.sheet.save()
+                self.log(f"이전에 보낸 기록 {n}곳을 명단에 다시 표시했어요.")
+            except Exception:
+                pass
 
     def get_slots(self):
         """PPT 자리는 한 번만 훑고 기억해 둔다."""

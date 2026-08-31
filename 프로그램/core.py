@@ -568,8 +568,12 @@ REASON_TEXT = {
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def classify(sheet: Sheet, cfg: dict) -> list[dict]:
-    """행마다 보낼지 말지와 그 이유를 붙인다. 보내기 전에 미리 보여주기 위한 것."""
+def classify(sheet: Sheet, cfg: dict, log: "SendLog | None" = None) -> list[dict]:
+    """행마다 보낼지 말지와 그 이유를 붙인다. 보내기 전에 미리 보여주기 위한 것.
+
+    log 를 주면 엑셀의 '발송상태' 열보다 그쪽을 먼저 본다. 명단을 바꿔도
+    어디까지 보냈는지가 남아 있어야 하기 때문이다.
+    """
     col_em  = cfg.get("col_email", "")
     col_cat = cfg.get("col_category", "")
     skips   = {str(s).strip() for s in (cfg.get("skip_categories") or []) if str(s).strip()}
@@ -578,7 +582,7 @@ def classify(sheet: Sheet, cfg: dict) -> list[dict]:
     out = []
     for i, row in enumerate(sheet.rows):
         email  = (row.get(col_em, "") or "").strip()
-        status = (row.get(STATUS_COL, "") or "").strip()
+        status = (log.status_of(email) if log else "")             or (row.get(STATUS_COL, "") or "").strip()
         cat    = (row.get(col_cat, "") or "").strip() if col_cat else ""
 
         if status == "발송완료":
@@ -597,6 +601,7 @@ def classify(sheet: Sheet, cfg: dict) -> list[dict]:
         out.append({
             "index":   i,
             "row":     row,
+            "when":    log.when_of(email) if log else "",
             "name":    (row.get(name_col, "") or "").strip() if name_col else f"{i + 1}행",
             "email":   email,
             "category": cat,
@@ -773,3 +778,105 @@ def pre_send_issues(cfg: dict, slots, sheet) -> tuple[list[dict], list[dict]]:
         (must if looks_like_placeholder(s.inner, cols) else check).append(item)
 
     return must, check
+
+
+# ──────────────────────────────────────────────────────────
+# 발송 기록 — 엑셀이 아니라 행사 폴더에 남긴다
+# ──────────────────────────────────────────────────────────
+
+class SendLog:
+    """어디까지 보냈는지를 이메일 주소로 기억한다.
+
+    예전에는 엑셀의 '발송상태' 열에만 적었다. 그런데 앱은 올린 엑셀의
+    '사본'을 쓰기 때문에, 원본을 고쳐 다시 올리면 그 열이 없는 새 파일이
+    되어 기록이 통째로 사라졌다. 명단을 바꿔도 남아야 하는 정보라
+    행사 폴더에 따로 둔다.
+
+    엑셀에도 계속 적어 준다 — 사람이 열어 볼 수 있어야 하니까.
+    """
+
+    FILE = "발송기록.json"
+
+    def __init__(self, ws: str):
+        self.ws = ws
+        self.path = ws_dir(ws) / self.FILE
+        self.rows: dict[str, dict] = {}
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            self.rows = data.get("보낸곳") or {}
+        except Exception:
+            self.rows = {}
+
+    def save(self) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(
+                json.dumps({"보낸곳": self.rows}, ensure_ascii=False, indent=2),
+                encoding="utf-8")
+        except Exception:
+            pass
+
+    @staticmethod
+    def _key(email: str) -> str:
+        return first_email(email).lower()
+
+    def mark(self, email: str, name: str, status: str) -> None:
+        k = self._key(email)
+        if not k:
+            return
+        self.rows[k] = {
+            "이름": name,
+            "상태": status,
+            "때":  datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+
+    def status_of(self, email: str) -> str:
+        return (self.rows.get(self._key(email)) or {}).get("상태", "")
+
+    def when_of(self, email: str) -> str:
+        return (self.rows.get(self._key(email)) or {}).get("때", "")
+
+    def clear(self, email: str) -> None:
+        self.rows.pop(self._key(email), None)
+
+    def count(self, status: str) -> int:
+        return sum(1 for v in self.rows.values() if v.get("상태") == status)
+
+    # ── 명단과 맞추기 ──
+    def absorb(self, sheet, email_col: str) -> int:
+        """엑셀에 적혀 있던 상태를 기록으로 들여온다.
+
+        예전 버전 명단이나, 손으로 표시해 둔 것을 살리기 위한 것.
+        """
+        if not email_col:
+            return 0
+        n = 0
+        for row in sheet.rows:
+            st = (row.get(STATUS_COL, "") or "").strip()
+            if st and not self.status_of(row.get(email_col, "")):
+                k = self._key(row.get(email_col, ""))
+                if k:
+                    self.rows[k] = {"이름": "", "상태": st, "때": ""}
+                    n += 1
+        if n:
+            self.save()
+        return n
+
+    def apply_to(self, sheet, email_col: str) -> int:
+        """기록을 엑셀 '발송상태' 열에 다시 써 넣는다.
+
+        새 명단을 올려도 사람이 엑셀만 열어 봐도 알 수 있게 한다.
+        """
+        if not email_col or not self.rows:
+            return 0
+        sheet.ensure_column(STATUS_COL)
+        n = 0
+        for i, row in enumerate(sheet.rows):
+            st = self.status_of(row.get(email_col, ""))
+            if st and (row.get(STATUS_COL, "") or "").strip() != st:
+                sheet.set(i, STATUS_COL, st)
+                n += 1
+        return n

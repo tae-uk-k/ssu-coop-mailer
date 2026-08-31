@@ -448,7 +448,8 @@ def build_one(ws: str, cfg: dict, row: dict, ppt: PowerPointSession | None,
 
 def run_send(ws: str, cfg: dict, targets: list[dict], sheet,
              log_fn, progress_fn, done_fn, fail_fn=None,
-             stop_event: threading.Event | None = None) -> None:
+             stop_event: threading.Event | None = None,
+             sent_log: "core.SendLog | None" = None) -> None:
     """targets 는 core.classify() 결과에서 보낼 것만 걸러낸 목록.
 
     fail_fn(기업이름, 단계, 예외) 는 실패한 곳을 화면이 모아 두는 데 쓴다.
@@ -468,6 +469,8 @@ def run_send(ws: str, cfg: dict, targets: list[dict], sheet,
         slot_map = cfg.get("slot_map") or {}
         used_names: set[str] = set()      # 파일이 서로 덮어써지지 않게
         sheet.ensure_column(STATUS_COL)
+        if sent_log is None:
+            sent_log = core.SendLog(ws)
 
         log_fn(f"{total}곳에 보내기 시작합니다.")
         svc = gmail_service()
@@ -536,6 +539,8 @@ def run_send(ws: str, cfg: dict, targets: list[dict], sheet,
                     send_mail(svc, t["email"], subject, body, pdf_out)
                     progress_fn(i, total, name, STEP_MAIL, "ok")
                     sheet.set(idx, STATUS_COL, "발송완료")
+                    sent_log.mark(t["email"], name, "발송완료")
+                    sent_log.save()
                     sent += 1
                     _save_quietly(sheet, log_fn)
                 except Exception as e:
@@ -543,6 +548,8 @@ def run_send(ws: str, cfg: dict, targets: list[dict], sheet,
                     log_fn(f"[{name}] 메일을 보내지 못했어요 — {explain.short(e)}")
                     fail_fn(name, STEP_MAIL, e)
                     sheet.set(idx, STATUS_COL, "발송실패")
+                    sent_log.mark(t["email"], name, "발송실패")
+                    sent_log.save()
                     failed += 1
                     _save_quietly(sheet, log_fn)
 

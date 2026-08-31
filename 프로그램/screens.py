@@ -469,7 +469,7 @@ class ListScreen(Screen):
         else:
             self._sample.configure(text="열을 골라야 보낼 수 있어요")
 
-        marks = core.classify(sheet, self.app.cfg)
+        marks = core.classify(sheet, self.app.cfg, self.app.sent_log)
         self._view = marks
 
         n_send = sum(1 for m in marks if m["kind"] == core.SEND)
@@ -682,7 +682,7 @@ class SlotsScreen(Screen):
         sheet = self.app.sheet
         if not sheet:
             return {}
-        marks = core.classify(sheet, self.app.cfg)
+        marks = core.classify(sheet, self.app.cfg, self.app.sent_log)
         for m in marks:
             if m["kind"] == core.SEND:
                 return m["row"]
@@ -946,8 +946,8 @@ class MailScreen(Screen):
 
         self._targets = []
         if sheet:
-            self._targets = [m for m in core.classify(sheet, cfg)
-                             if m["kind"] == core.SEND] or core.classify(sheet, cfg)
+            self._targets = [m for m in core.classify(sheet, cfg, self.app.sent_log)
+                             if m["kind"] == core.SEND] or core.classify(sheet, cfg, self.app.sent_log)
         names = [m["name"] or f"{i+1}행" for i, m in enumerate(self._targets)][:50]
         self._sel_who.configure(values=names or [NONE_LABEL])
         if names:
@@ -1046,6 +1046,28 @@ class SendScreen(Screen):
         T.Select(orow, ["0초", "3초", "5초", "10초", "30초"], self._v_gap,
                  width=100, command=self._on_gap).pack(side="right")
 
+        # 어디부터 보낼까
+        self._range_card = T.Card(self)
+        rr = ctk.CTkFrame(self._range_card, fg_color="transparent")
+        rr.pack(fill="x", padx=20, pady=16)
+        left = ctk.CTkFrame(rr, fg_color="transparent")
+        left.pack(side="left", fill="x", expand=True)
+        T.subtitle(left, "어디부터 보낼까요").pack(anchor="w")
+        self._range_hint = T.label(left, "", T.G500, 12)
+        self._range_hint.pack(anchor="w", pady=(2, 0))
+
+        picks = ctk.CTkFrame(rr, fg_color="transparent")
+        picks.pack(side="right")
+        self._v_from = ctk.StringVar(value="처음부터")
+        self._sel_from = T.Select(picks, ["처음부터"], self._v_from, width=210,
+                                  command=lambda _v: self._range_changed())
+        self._sel_from.pack(side="left")
+        T.label(picks, "부터", T.G500, 13).pack(side="left", padx=(8, 14))
+        self._v_howmany = ctk.StringVar(value="끝까지")
+        T.Select(picks, ["끝까지", "10곳만", "30곳만", "50곳만", "100곳만"],
+                 self._v_howmany, width=110,
+                 command=lambda _v: self._range_changed()).pack(side="left")
+
         # 진행
         self._prog_card = T.Card(self)
         pb = ctk.CTkFrame(self._prog_card, fg_color="transparent")
@@ -1111,8 +1133,9 @@ class SendScreen(Screen):
     # ── 상태 전환 ──
     def _layout(self, state: str):
         self._state = state
-        for w in (self._check, self._stats, self._opts, self._prog_card,
-                  self._list_card, self._fail_card, self._after_card):
+        for w in (self._check, self._stats, self._opts, self._range_card,
+                  self._prog_card, self._list_card, self._fail_card,
+                  self._after_card):
             w.pack_forget()
         self._btn_send.pack_forget()
         self._btn_hint.pack_forget()
@@ -1121,6 +1144,7 @@ class SendScreen(Screen):
             self._title.configure(text=self._ready_title)
             self._check.pack(fill="x", pady=(0, 12))
             self._stats.pack(fill="x", pady=(0, 12))
+            self._range_card.pack(fill="x", pady=(0, 12))
             self._opts.pack(fill="x")
             self._btn_send.pack(side="left")
             self._btn_hint.pack(side="left", padx=(14, 0))
@@ -1149,10 +1173,11 @@ class SendScreen(Screen):
         sheet = self.app.reload_sheet()
         problems = self._check_all(cfg, sheet)
 
-        self._targets = []
+        self._all_targets = []
         if sheet and cfg.get("col_email"):
-            self._targets = [m for m in core.classify(sheet, cfg)
-                             if m["kind"] == core.SEND]
+            self._all_targets = [m for m in core.classify(sheet, cfg, self.app.sent_log)
+                                 if m["kind"] == core.SEND]
+        self._targets = list(self._all_targets)
 
         n = len(self._targets)
         self._ready_title = f"{n}곳에 보낼 준비가 됐어요" if n and not problems \
@@ -1174,6 +1199,9 @@ class SendScreen(Screen):
             warns.append(f"제안서의 {tokens} 은(는) 바뀌지 않고 그대로 나갑니다. "
                          "원래 그런 문구면 괜찮아요. 아니라면 3단계에서 골라 주세요.")
 
+        # 막힌 상태를 기억해 둔다. 범위를 다시 고를 때 버튼이 되살아나면 안 된다.
+        self._blocked = bool(problems)
+
         if problems:
             self._set_check("red", "!", "· " + "\n· ".join(problems))
             self._btn_send.configure(state="disabled")
@@ -1190,9 +1218,60 @@ class SendScreen(Screen):
             self._btn_hint.configure(
                 text="보내는 중에 멈출 수 있고, 다시 시작하면 보낸 곳은 건너뛰어요.")
 
-        self._btn_send.configure(text=f"{n}곳에 보내기" if n else "보내기")
         self._v_gap.set(f"{int(float(cfg.get('send_interval') or 0))}초")
+        self._fill_range()
         self._layout("ready")
+
+    # ── 어디부터 몇 곳 ──
+    def _fill_range(self):
+        """보낼 곳 목록으로 '어디부터' 선택지를 채운다."""
+        names = ["처음부터"]
+        for i, t in enumerate(self._all_targets, start=1):
+            names.append(f"{i}. {t['name'] or '(이름 없음)'}")
+        self._sel_from.configure(values=names[:300])
+        if self._v_from.get() not in names:
+            self._v_from.set("처음부터")
+        self._range_changed()
+
+    def _range_changed(self, *_a):
+        """고른 범위만 남긴다. 이미 보낸 곳은 애초에 목록에 없다."""
+        start = 0
+        pick = self._v_from.get()
+        if pick != "처음부터":
+            try:
+                start = int(pick.split(".", 1)[0]) - 1
+            except Exception:
+                start = 0
+
+        rest = self._all_targets[start:]
+        cap = self._v_howmany.get()
+        if cap != "끝까지":
+            try:
+                rest = rest[:int(cap.replace("곳만", ""))]
+            except Exception:
+                pass
+
+        self._targets = rest
+        n = len(rest)
+        total = len(self._all_targets)
+
+        if n == total:
+            self._range_hint.configure(
+                text=f"안 보낸 곳 {total}곳을 모두 보냅니다.")
+        elif n:
+            self._range_hint.configure(
+                text=f"{total}곳 중 {n}곳만 보냅니다  ·  "
+                     f"{rest[0]['name']} → {rest[-1]['name']}")
+        else:
+            self._range_hint.configure(text="고른 범위에 보낼 곳이 없어요.")
+
+        self._s1.set_value(n)
+        self._s2.set_value(n)
+        secs = int(n * (12 + float(self.app.cfg.get("send_interval") or 0)))
+        self._s3.set_value(f"{max(1, secs // 60)}분" if n else "-")
+        self._btn_send.configure(text=f"{n}곳에 보내기" if n else "보내기")
+        if not getattr(self, "_blocked", False):
+            self._btn_send.configure(state="normal" if n else "disabled")
 
     def _set_check(self, kind: str, mark: str, text: str) -> None:
         """알림 상자의 색·기호·글을 한 번에 맞춘다.
@@ -1333,7 +1412,7 @@ class SendScreen(Screen):
         threading.Thread(
             target=engine.run_send,
             args=(self.app.ws, cfg, targets, sheet, log, progress, done, fail),
-            kwargs={"stop_event": self._stop},
+            kwargs={"stop_event": self._stop, "sent_log": self.app.sent_log},
             daemon=True).start()
 
     def _build_rows(self):
@@ -1518,7 +1597,7 @@ class BounceScreen(Screen):
     def _done(self, hits, sheet):
         self._btn.configure(state="normal")
         self._state.configure(text="")
-        marks = core.classify(sheet, self.app.cfg)
+        marks = core.classify(sheet, self.app.cfg, self.app.sent_log)
         sent_ok = sum(1 for m in marks if m["kind"] == core.ALREADY)
         self._s_ok.set_value(sent_ok)
         self._s_bad.set_value(len(hits))
